@@ -11,12 +11,12 @@ def get_eval_method(eval_method):
         utils.debug_log("powhf.evaluate.get_eval_method :: Eval method is callable")
         return eval_method
     elif eval_method == "likelihood":
-        from powhf.evaluation import likelihood
+        from powhf.evaluate import likelihood
 
         utils.debug_log("powhf.evaluate.get_eval_method :: Eval method is likelihood")
         return likelihood.likelihood_evaluator
     elif eval_method == "bandits":
-        from powhf.evaluation import bandits
+        from powhf.evaluate import bandits
 
         utils.debug_log("powhf.evaluate.get_eval_method :: Eval method is bandits")
         return bandits.bandits_evaluator

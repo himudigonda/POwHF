@@ -8,11 +8,12 @@ import numpy as np
 import random
 from powhf import ape, data, utils, template
 from datasets import load_dataset
-from powhf.evaluation.instruction_induction.utility import set_all_seed
+from powhf.utils import set_all_seed  # Modified import path
 from powhf.llm import model_from_config
 from powhf.LlamaForMLPRegression import DoubleTS, LinearDBDiag, NeuralDBDiag
 from transformers import AutoTokenizer, AutoModel
 import torch.nn.functional as F
+from data.instruction_induction.load_data import load_data
 
 cwd = os.getcwd()
 sys.path.append(cwd)

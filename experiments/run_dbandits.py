@@ -14,6 +14,9 @@ from powhf.LlamaForMLPRegression import DoubleTS, LinearDBDiag, NeuralDBDiag
 from transformers import AutoTokenizer, AutoModel
 import torch.nn.functional as F
 from data.instruction_induction.load_data import load_data
+import cProfile
+import time
+from langsmith import Client
 
 cwd = os.getcwd()
 sys.path.append(cwd)
@@ -173,6 +176,7 @@ class LocalHFModelForwardAPI:
         utils.debug_log(
             f"experiments.run_dbandits.LocalHFModelForwardAPI.eval :: Evaluating instruction: {instruction}, test: {test}"
         )
+        start_time = time.time()
         if instruction[0] in self.prompts_set.keys():
             dev_perf = self.prompts_set[instruction[0]]
         else:
@@ -213,6 +217,10 @@ class LocalHFModelForwardAPI:
             utils.debug_log(
                 f"experiments.run_dbandits.LocalHFModelForwardAPI.eval :: Returning dev_perf: {dev_perf}"
             )
+        end_time = time.time()
+        utils.debug_log(
+            f"experiments.run_dbandits.LocalHFModelForwardAPI.eval :: Eval time: {end_time-start_time:.4f} seconds"
+        )
         return dev_perf
 
     def return_best_prompt(self):
@@ -260,6 +268,7 @@ def run(
     init_scale,
     pooling,
     args,
+    langsmith_client=None,
 ):
     utils.info_log(
         f"experiments.run_dbandits.run :: Starting main run function, task: {task}"
@@ -342,8 +351,13 @@ def run(
         )
         if not os.path.exists("./query"):
             os.mkdir("./query")
+        start_time = time.time()
         init_instructions = model_forward_api.initialize_prompts(
             args.n_domain, task, args.candidate_method
+        )
+        end_time = time.time()
+        utils.debug_log(
+            f"experiments.run_dbandits.run :: Prompt initialization time: {end_time-start_time:.4f} seconds"
         )
         with open(path_, "x") as fp:
             domains = {"instructions": init_instructions}
@@ -443,10 +457,12 @@ def run(
     best_values = []
     now_values = []
     best_instruction_over_iter = []
+
     for t in range(max_iter):
         utils.debug_log(
             f"experiments.run_dbandits.run :: Iteration {t}, starting selection"
         )
+        start_time = time.time()
         if args.func == "random":
             arm_select1, arm_select2 = np.random.choice(args.n_domain, 2, replace=False)
         else:
@@ -492,6 +508,25 @@ def run(
             f"experiments.run_dbandits.run :: Iteration {t}, best reward so far: {best_r}"
         )
         best_values.append(best_r)
+        end_time = time.time()
+        utils.debug_log(
+            f"experiments.run_dbandits.run :: Iteration time: {end_time-start_time:.4f} seconds"
+        )
+
+        if langsmith_client:
+            run = langsmith_client.create_run(
+                name=f"Iteration {t}",
+                inputs={
+                    "arm1": init_instructions[arm_select1],
+                    "arm2": init_instructions[arm_select2],
+                    "best_arm": init_instructions[best_arm],
+                },
+                outputs={
+                    "reward": r,
+                    "best_r": best_r,
+                    "best_instruction": init_instructions[best_arm],
+                },
+            )
 
     utils.info_log(
         "experiments.run_dbandits.run :: Evaluating best prompt on test data"
@@ -558,7 +593,7 @@ def parse_args():
         help="The name of the dataset to use (via the datasets library).",
     )
     parser.add_argument(
-        "--n_prompt_tokens", type=int, default=5, help="The number of prompt tokens."
+        "--n_prompt_tokens", type=int, default=5, help="The number ofprompt tokens."
     )
     parser.add_argument("--nu", type=float, default=0.1, help="Set the parameter nu.")
     parser.add_argument(
@@ -634,6 +669,19 @@ def parse_args():
         default="induction",
         help="The way to generate candidates.",
     )
+    parser.add_argument(
+        "--langsmith_api_key",
+        type=str,
+        default=None,
+        help="The langsmith api key.",
+    )
+
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Whether to run the profiler",
+    )
+
     args = parser.parse_args()
     return args
 
@@ -644,6 +692,13 @@ if __name__ == "__main__":
         f"experiments.run_dbandits.main :: Starting main execution, args: {args}"
     )
     print(set_all_seed(0))
+    langsmith_client = None
+    if args.langsmith_api_key:
+        langsmith_client = Client(api_key=args.langsmith_api_key)
+    if args.profile:
+        profiler = cProfile.Profile()
+        profiler.enable()
+    start_time_total = time.time()
     (
         test_score,
         prompts,
@@ -669,7 +724,12 @@ if __name__ == "__main__":
         init_scale=args.init_scale,
         pooling=args.pooling,
         args=args,
+        langsmith_client=langsmith_client,
     )
+    end_time_total = time.time()
+    if args.profile:
+        profiler.disable()
+        profiler.print_stats(sort="cumtime")
 
     args_dict = vars(args)
     args_dict["test_score"] = test_score
@@ -681,6 +741,7 @@ if __name__ == "__main__":
     args_dict["init_instructions"] = init_instructions
     args_dict["instruction_select_history"] = instruction_select_history
     args_dict["now_values"] = now_values
+    args_dict["total_time"] = end_time_total - start_time_total
 
     save_dir = "./results/" + args.name
 

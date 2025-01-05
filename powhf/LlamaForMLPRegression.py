@@ -8,31 +8,52 @@ from backpack import backpack, extend
 from backpack.extensions import BatchGrad
 from powhf import utils
 
-tkwargs = {
-    "device": torch.device("cuda:0"),
-    "dtype": torch.float32,
-}
+if torch.backends.mps.is_available():
+    tkwargs = {
+        "device": torch.device("mps"),
+        "dtype": torch.float32,
+    }
+elif torch.cuda.is_available():
+    tkwargs = {
+        "device": torch.device("cuda:0"),
+        "dtype": torch.float32,
+    }
+else:
+    tkwargs = {
+        "device": torch.device("cpu"),
+        "dtype": torch.float32,
+    }
+
 
 class MLPRegression(nn.Module):
     """A simple MLP for regression."""
+
     def __init__(self, input_dim=86):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.MLPRegression :: Initializing MLP, input dim: {input_dim}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.MLPRegression :: Initializing MLP, input dim: {input_dim}"
+        )
         super(MLPRegression, self).__init__()
         self.fc1 = nn.Linear(input_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, 1)
 
     def forward(self, x):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.MLPRegression.forward :: Forward pass")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.MLPRegression.forward :: Forward pass"
+        )
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         output = self.fc3(x)
         return output
 
+
 class CustomImageDataset(Dataset):
     """A dataset for image data."""
+
     def __init__(self, X_train, Y_train):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.CustomImageDataset :: Initializing dataset, X_train size: {len(X_train)}, Y_train size: {len(Y_train)}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.CustomImageDataset :: Initializing dataset, X_train size: {len(X_train)}, Y_train size: {len(Y_train)}"
+        )
         self.X_train = X_train
         self.Y_train = Y_train
 
@@ -46,11 +67,13 @@ class CustomImageDataset(Dataset):
 class ENN(nn.Module):
     def __init__(self, input_dim, hidden_size=32, depth=2, init_params=None):
         super(ENN, self).__init__()
-        utils.debug_log(f"powhf.LlamaForMLPRegression.ENN :: Initializing ENN, input dim: {input_dim}, hidden size: {hidden_size}, depth: {depth}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.ENN :: Initializing ENN, input dim: {input_dim}, hidden size: {hidden_size}, depth: {depth}"
+        )
         self.activate = nn.ReLU()
         self.layer_list = nn.ModuleList()
         self.layer_list.append(nn.Linear(input_dim, hidden_size))
-        for i in range(depth-1):
+        for i in range(depth - 1):
             self.layer_list.append(nn.Linear(hidden_size, hidden_size))
         self.layer_list.append(nn.Linear(hidden_size, 1))
 
@@ -58,7 +81,7 @@ class ENN(nn.Module):
         for i in range(10):
             new_module = nn.ModuleList()
             new_module.append(nn.Linear(input_dim, hidden_size))
-            for j in range(depth-1):
+            for j in range(depth - 1):
                 new_module.append(nn.Linear(hidden_size, hidden_size))
             new_module.append(nn.Linear(hidden_size, 1))
             self.layer_list_10.append(new_module)
@@ -69,12 +92,14 @@ class ENN(nn.Module):
                 torch.nn.init.normal_(self.layer_list[i].bias, mean=0, std=1.0)
         else:
             for i in range(len(self.layer_list)):
-                self.layer_list[i].weight.data = init_params[i*2]
-                self.layer_list[i].bias.data = init_params[i*2+1]
+                self.layer_list[i].weight.data = init_params[i * 2]
+                self.layer_list[i].bias.data = init_params[i * 2 + 1]
 
         for i in range(10):
             for j in range(len(self.layer_list)):
-                self.layer_list_10[i][j].weight.data.copy_(self.layer_list[j].weight.data)
+                self.layer_list_10[i][j].weight.data.copy_(
+                    self.layer_list[j].weight.data
+                )
                 self.layer_list_10[i][j].bias.data.copy_(self.layer_list[j].bias.data)
 
         for param in self.layer_list.parameters():
@@ -82,14 +107,26 @@ class ENN(nn.Module):
 
     def forward(self, x, idx):
         y = x
-        for i in range(len(self.layer_list_10[idx])-1):
+        for i in range(len(self.layer_list_10[idx]) - 1):
             y = self.activate(self.layer_list_10[idx][i](y))
         y = self.layer_list_10[idx][-1](y)
         return y
 
+
 class DoubleTS:
-    def __init__(self, input_dim, lamdba=1, nu=1, style='ucb', init_x=None, init_y=None, diagonalize=True):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS :: Initializing DoubleTS, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}")
+    def __init__(
+        self,
+        input_dim,
+        lamdba=1,
+        nu=1,
+        style="ucb",
+        init_x=None,
+        init_y=None,
+        diagonalize=True,
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS :: Initializing DoubleTS, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}"
+        )
         self.diagonalize = diagonalize
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
@@ -113,9 +150,12 @@ class DoubleTS:
         self.mean = None
         self.std = None
 
-
-    def select(self, context, select_idx_history, prompt_domain_id=None, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.select :: Selecting arms, context size: {context.shape[0]}")
+    def select(
+        self, context, select_idx_history, prompt_domain_id=None, batch_size=300
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.select :: Selecting arms, context size: {context.shape[0]}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
 
@@ -128,9 +168,9 @@ class DoubleTS:
             epi_idx = torch.randint(0, 10, (1,))
             for i in range(n_batchs):
                 if i == n_batchs - 1:
-                    context_batch = context[(i*batch_size):]
+                    context_batch = context[(i * batch_size) :]
                 else:
-                    context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                    context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
                 mu_ = self.func(context_batch, epi_idx)
 
@@ -160,12 +200,15 @@ class DoubleTS:
                 else:
                     final_arms.append(random_arm[1])
                 break
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.select :: Selected arms: {final_arms[0]}, {final_arms[1]}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.select :: Selected arms: {final_arms[0]}, {final_arms[1]}"
+        )
         return final_arms[0], final_arms[1]
 
-
     def find_best(self, context, select_idx_history, all_domain=False, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.find_best :: Finding best arm, context size: {context.shape[0]}, all domain: {all_domain}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.find_best :: Finding best arm, context size: {context.shape[0]}, all domain: {all_domain}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
         mu = []
@@ -173,9 +216,9 @@ class DoubleTS:
         for i in range(n_batchs):
             epi_idx = torch.randint(0, 10, (1,))
             if i == n_batchs - 1:
-                context_batch = context[(i*batch_size):]
+                context_batch = context[(i * batch_size) :]
             else:
-                context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
             mu_ = self.func(context_batch, epi_idx)
             mu.append(mu_.cpu())
@@ -187,17 +230,30 @@ class DoubleTS:
             all_queried = torch.tensor(select_idx_history).view(-1)
             arm_ = torch.argmax(mu.view(-1)[all_queried])
             arm = all_queried[arm_]
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.find_best :: Best arm: {arm}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.find_best :: Best arm: {arm}"
+        )
         return arm
 
-
     def train(self, context=None, reward=None, local_training_iter=30):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.train :: Training model, local iterations: {local_training_iter}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.train :: Training model, local iterations: {local_training_iter}"
+        )
         if self.init_state_dict is not None:
             self.func.load_state_dict(deepcopy(self.init_state_dict))
         if context is not None:
-            self.pair_embedding = torch.cat((self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1)
-            self.reward = torch.cat((self.reward, torch.tensor([reward]).reshape(-1).to(**tkwargs).to(dtype=torch.int64)))
+            self.pair_embedding = torch.cat(
+                (self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1
+            )
+            self.reward = torch.cat(
+                (
+                    self.reward,
+                    torch.tensor([reward])
+                    .reshape(-1)
+                    .to(**tkwargs)
+                    .to(dtype=torch.int64),
+                )
+            )
 
         self.len = self.pair_embedding.shape[1]
         optimizer = torch.optim.Adam(self.func.parameters(), lr=1e-3)
@@ -214,48 +270,90 @@ class DoubleTS:
                 epi_idx = torch.randint(0, 10, (1,))
                 self.func.zero_grad()
                 optimizer.zero_grad()
-                side_1 = self.pair_embedding[0, selected_idx, :].reshape(len(selected_idx), -1)
-                side_2 = self.pair_embedding[1, selected_idx, :].reshape(len(selected_idx), -1)
+                side_1 = self.pair_embedding[0, selected_idx, :].reshape(
+                    len(selected_idx), -1
+                )
+                side_2 = self.pair_embedding[1, selected_idx, :].reshape(
+                    len(selected_idx), -1
+                )
                 pred_1 = self.func(side_1, epi_idx)
                 pred_2 = self.func(side_2, epi_idx)
-                ce_ = torch.mean(-(1-reward_[selected_idx].to(dtype=torch.float32)) * pred_1.reshape(-1) - reward_[selected_idx].to(dtype=torch.float32) * pred_2.reshape(-1) + torch.log(torch.exp(pred_1.reshape(-1)) + torch.exp(pred_2.reshape(-1))))
+                ce_ = torch.mean(
+                    -(1 - reward_[selected_idx].to(dtype=torch.float32))
+                    * pred_1.reshape(-1)
+                    - reward_[selected_idx].to(dtype=torch.float32) * pred_2.reshape(-1)
+                    + torch.log(
+                        torch.exp(pred_1.reshape(-1)) + torch.exp(pred_2.reshape(-1))
+                    )
+                )
                 l2_reg_term = 0
-                for param1, param2 in zip(self.func.layer_list_10[epi_idx], self.func.layer_list):
-                    l2_reg_term += torch.sum((param1.weight - param2.weight) ** 2) + torch.sum((param1.bias - param2.bias) ** 2)
+                for param1, param2 in zip(
+                    self.func.layer_list_10[epi_idx], self.func.layer_list
+                ):
+                    l2_reg_term += torch.sum(
+                        (param1.weight - param2.weight) ** 2
+                    ) + torch.sum((param1.bias - param2.bias) ** 2)
                 loss = ce_ + lamdba_ * l2_reg_term
                 loss.backward()
                 optimizer.step()
             else:
                 for batch_id in range((self.len // batch_size)):
-                    if batch_id == (self.len // batch_size) - 1 and self.len % batch_size != 0:
-                        selected_idx = torch.arange(batch_id*batch_size, self.len)
+                    if (
+                        batch_id == (self.len // batch_size) - 1
+                        and self.len % batch_size != 0
+                    ):
+                        selected_idx = torch.arange(batch_id * batch_size, self.len)
                     else:
-                        selected_idx = torch.arange(batch_id*batch_size, (batch_id+1)*batch_size)
+                        selected_idx = torch.arange(
+                            batch_id * batch_size, (batch_id + 1) * batch_size
+                        )
                     epi_idx = torch.randint(0, 10, (1,))
                     self.func.zero_grad()
                     optimizer.zero_grad()
-                    side_1 = self.pair_embedding[0, selected_idx, :].reshape(len(selected_idx), -1)
-                    side_2 = self.pair_embedding[1, selected_idx, :].reshape(len(selected_idx), -1)
+                    side_1 = self.pair_embedding[0, selected_idx, :].reshape(
+                        len(selected_idx), -1
+                    )
+                    side_2 = self.pair_embedding[1, selected_idx, :].reshape(
+                        len(selected_idx), -1
+                    )
                     pred_1 = self.func(side_1, epi_idx)
                     pred_2 = self.func(side_2, epi_idx)
-                    ce_ = torch.mean(-(1-reward_[selected_idx].to(dtype=torch.float32)) * pred_1.reshape(-1) - reward_[selected_idx].to(dtype=torch.float32) * pred_2.reshape(-1) + torch.log(torch.exp(pred_1.reshape(-1)) + torch.exp(pred_2.reshape(-1))))
+                    ce_ = torch.mean(
+                        -(1 - reward_[selected_idx].to(dtype=torch.float32))
+                        * pred_1.reshape(-1)
+                        - reward_[selected_idx].to(dtype=torch.float32)
+                        * pred_2.reshape(-1)
+                        + torch.log(
+                            torch.exp(pred_1.reshape(-1))
+                            + torch.exp(pred_2.reshape(-1))
+                        )
+                    )
                     l2_reg_term = 0
-                    for param1, param2 in zip(self.func.layer_list_10[epi_idx], self.func.layer_list):
-                        l2_reg_term += torch.sum((param1.weight - param2.weight) ** 2) + torch.sum((param1.bias - param2.bias) ** 2)
+                    for param1, param2 in zip(
+                        self.func.layer_list_10[epi_idx], self.func.layer_list
+                    ):
+                        l2_reg_term += torch.sum(
+                            (param1.weight - param2.weight) ** 2
+                        ) + torch.sum((param1.bias - param2.bias) ** 2)
                     loss = ce_ + lamdba_ * l2_reg_term
                     loss.backward()
                     optimizer.step()
-        utils.debug_log(f"powhf.LlamaForMLPRegression.DoubleTS.train :: Training Loss : {loss.item()}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.DoubleTS.train :: Training Loss : {loss.item()}"
+        )
         return self.func.state_dict()
+
 
 class Network(nn.Module):
     def __init__(self, input_dim, hidden_size=32, depth=2, init_params=None):
         super(Network, self).__init__()
-        utils.debug_log(f"powhf.LlamaForMLPRegression.Network :: Initializing Network, input dim: {input_dim}, hidden size: {hidden_size}, depth: {depth}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.Network :: Initializing Network, input dim: {input_dim}, hidden size: {hidden_size}, depth: {depth}"
+        )
         self.activate = nn.ReLU()
         self.layer_list = nn.ModuleList()
         self.layer_list.append(nn.Linear(input_dim, hidden_size))
-        for i in range(depth-1):
+        for i in range(depth - 1):
             self.layer_list.append(nn.Linear(hidden_size, hidden_size))
         self.layer_list.append(nn.Linear(hidden_size, 1))
 
@@ -265,19 +363,31 @@ class Network(nn.Module):
                 torch.nn.init.normal_(self.layer_list[i].bias, mean=0, std=1.0)
         else:
             for i in range(len(self.layer_list)):
-                self.layer_list[i].weight.data = init_params[i*2]
-                self.layer_list[i].bias.data = init_params[i*2+1]
+                self.layer_list[i].weight.data = init_params[i * 2]
+                self.layer_list[i].bias.data = init_params[i * 2 + 1]
 
     def forward(self, x):
         y = x
-        for i in range(len(self.layer_list)-1):
+        for i in range(len(self.layer_list) - 1):
             y = self.activate(self.layer_list[i](y))
         y = self.layer_list[-1](y)
         return y
 
+
 class NeuralDBDiag:
-    def __init__(self, input_dim, lamdba=1, nu=1, style='ucb', init_x=None, init_y=None, diagonalize=True):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag :: Initializing NeuralDBDiag, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}")
+    def __init__(
+        self,
+        input_dim,
+        lamdba=1,
+        nu=1,
+        style="ucb",
+        init_x=None,
+        init_y=None,
+        diagonalize=True,
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag :: Initializing NeuralDBDiag, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}"
+        )
         self.diagonalize = diagonalize
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
@@ -294,7 +404,9 @@ class NeuralDBDiag:
             self.reward = None
         self.len = 0
         self.lamdba = lamdba
-        self.total_param = sum(p.numel() for p in self.func.parameters() if p.requires_grad)
+        self.total_param = sum(
+            p.numel() for p in self.func.parameters() if p.requires_grad
+        )
 
         self.nu = nu
         self.lamdba = lamdba
@@ -303,9 +415,12 @@ class NeuralDBDiag:
         self.mean = None
         self.std = None
 
-
-    def select(self, context, select_idx_history, prompt_domain_id=None, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.select :: Selecting arms, context size: {context.shape[0]}")
+    def select(
+        self, context, select_idx_history, prompt_domain_id=None, batch_size=300
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.select :: Selecting arms, context size: {context.shape[0]}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
         g_list = []
@@ -313,15 +428,21 @@ class NeuralDBDiag:
         self.func.train()
         for i in range(n_batchs):
             if i == n_batchs - 1:
-                context_batch = context[(i*batch_size):]
+                context_batch = context[(i * batch_size) :]
             else:
-                context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
             mu_ = self.func(context_batch)
             sum_mu = torch.sum(mu_)
             with backpack(BatchGrad()):
                 sum_mu.backward()
-            g_list_ = torch.cat([p.grad_batch.flatten(start_dim=1).detach() for p in self.func.parameters()], dim=1)
+            g_list_ = torch.cat(
+                [
+                    p.grad_batch.flatten(start_dim=1).detach()
+                    for p in self.func.parameters()
+                ],
+                dim=1,
+            )
             g_list.append(g_list_.cpu())
             mu.append(mu_.cpu())
         g_list = torch.vstack(g_list)
@@ -343,26 +464,32 @@ class NeuralDBDiag:
                 arm1 = prompt_domain_id_[arm1_]
 
         history = torch.tensor(select_idx_history)
-        grad_1 = g_list[history[:,0]]
-        grad_2 = g_list[history[:,1]]
+        grad_1 = g_list[history[:, 0]]
+        grad_2 = g_list[history[:, 1]]
         feature = grad_1 - grad_2
 
-        U = torch.matmul(feature.transpose(0,1), feature) + self.lamdba * torch.eye(self.total_param)
+        U = torch.matmul(feature.transpose(0, 1), feature) + self.lamdba * torch.eye(
+            self.total_param
+        )
         U = U.diagonal()
         grad_arm_1 = g_list[arm1]
         feature_arm_2 = g_list - grad_arm_1
 
-        sigma = torch.sqrt(torch.sum(self.nu * feature_arm_2 * feature_arm_2 / U, dim=1))
+        sigma = torch.sqrt(
+            torch.sum(self.nu * feature_arm_2 * feature_arm_2 / U, dim=1)
+        )
         sample_r = mu.view(-1) + sigma.view(-1)
 
         if prompt_domain_id is None:
             if self.nu == -1:
-                 sorted_idx = torch.argsort(torch.rand(context_size), descending=True)
+                sorted_idx = torch.argsort(torch.rand(context_size), descending=True)
             else:
                 sorted_idx = torch.argsort(sample_r, descending=True)
         else:
             if self.nu == -1:
-                sorted_idx = torch.argsort(torch.rand(len(prompt_domain_id)), descending=True)
+                sorted_idx = torch.argsort(
+                    torch.rand(len(prompt_domain_id)), descending=True
+                )
                 prompt_domain_id_ = torch.tensor(prompt_domain_id)
                 sorted_idx = prompt_domain_id_[sorted_idx]
             else:
@@ -373,21 +500,24 @@ class NeuralDBDiag:
             arm2 = sorted_idx[1]
         else:
             arm2 = sorted_idx[0]
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.select :: Selected arms: {arm1}, {arm2}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.select :: Selected arms: {arm1}, {arm2}"
+        )
         return arm1, arm2
 
-
     def find_best(self, context, select_idx_history, all_domain=False, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.find_best :: Finding best arm, all_domain: {all_domain}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.find_best :: Finding best arm, all_domain: {all_domain}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
         mu = []
         self.func.eval()
         for i in range(n_batchs):
             if i == n_batchs - 1:
-                context_batch = context[(i*batch_size):]
+                context_batch = context[(i * batch_size) :]
             else:
-                context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
             mu_ = self.func(context_batch)
             mu.append(mu_.cpu())
@@ -399,20 +529,35 @@ class NeuralDBDiag:
             all_queried = torch.tensor(select_idx_history).view(-1)
             arm_ = torch.argmax(mu.view(-1)[all_queried])
             arm = all_queried[arm_]
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.find_best :: Best arm: {arm}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.find_best :: Best arm: {arm}"
+        )
         return arm
 
-
     def train(self, context=None, reward=None, local_training_iter=30):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.train :: Training model, local iterations: {local_training_iter}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.train :: Training model, local iterations: {local_training_iter}"
+        )
         if self.init_state_dict is not None:
             self.func.load_state_dict(deepcopy(self.init_state_dict))
         if context is not None:
-            self.pair_embedding = torch.cat((self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1)
-            self.reward = torch.cat((self.reward, torch.tensor([reward]).reshape(-1).to(**tkwargs).to(dtype=torch.int64)))
+            self.pair_embedding = torch.cat(
+                (self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1
+            )
+            self.reward = torch.cat(
+                (
+                    self.reward,
+                    torch.tensor([reward])
+                    .reshape(-1)
+                    .to(**tkwargs)
+                    .to(dtype=torch.int64),
+                )
+            )
 
         self.len = self.pair_embedding.shape[1]
-        optimizer = torch.optim.Adam(self.func.parameters(), lr=1e-3, weight_decay=self.lamdba / (self.len+50))
+        optimizer = torch.optim.Adam(
+            self.func.parameters(), lr=1e-3, weight_decay=self.lamdba / (self.len + 50)
+        )
         self.func.train()
         for _ in range(local_training_iter):
             self.func.zero_grad()
@@ -423,15 +568,22 @@ class NeuralDBDiag:
             pred_2 = self.func(side_2)
             logits = (pred_1 - pred_2).reshape(-1)
             reward_ = self.reward.reshape(-1)
-            loss = F.binary_cross_entropy_with_logits(logits, reward_.to(dtype=torch.float32))
+            loss = F.binary_cross_entropy_with_logits(
+                logits, reward_.to(dtype=torch.float32)
+            )
             loss.backward()
             optimizer.step()
-        utils.debug_log(f"powhf.LlamaForMLPRegression.NeuralDBDiag.train :: Training loss: {loss.item()}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.NeuralDBDiag.train :: Training loss: {loss.item()}"
+        )
         return self.func.state_dict()
+
 
 class LinearModel(nn.Module):
     def __init__(self, input_dim, init_params=None):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearModel :: Initializing LinearModel, input dim: {input_dim}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearModel :: Initializing LinearModel, input dim: {input_dim}"
+        )
         super(LinearModel, self).__init__()
         self.linear = nn.Linear(input_dim, 1, bias=False)
 
@@ -441,8 +593,19 @@ class LinearModel(nn.Module):
 
 
 class LinearDBDiag:
-    def __init__(self, input_dim, lamdba=1, nu=1, style='ucb', init_x=None, init_y=None, diagonalize=True):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag :: Initializing LinearDBDiag, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}")
+    def __init__(
+        self,
+        input_dim,
+        lamdba=1,
+        nu=1,
+        style="ucb",
+        init_x=None,
+        init_y=None,
+        diagonalize=True,
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag :: Initializing LinearDBDiag, input dim: {input_dim}, lambda: {lamdba}, nu: {nu}, style: {style}"
+        )
         self.diagonalize = diagonalize
         torch.manual_seed(0)
         torch.cuda.manual_seed(0)
@@ -468,17 +631,21 @@ class LinearDBDiag:
         self.mean = None
         self.std = None
 
-    def select(self, context, select_idx_history, prompt_domain_id=None, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.select :: Selecting arms, context size: {context.shape[0]}")
+    def select(
+        self, context, select_idx_history, prompt_domain_id=None, batch_size=300
+    ):
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.select :: Selecting arms, context size: {context.shape[0]}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
         mu = []
         self.func.eval()
         for i in range(n_batchs):
             if i == n_batchs - 1:
-                context_batch = context[(i*batch_size):]
+                context_batch = context[(i * batch_size) :]
             else:
-                context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
             mu_ = self.func(context_batch)
             mu.append(mu_.cpu())
@@ -492,18 +659,20 @@ class LinearDBDiag:
             arm1 = prompt_domain_id_[arm1_]
 
         history = torch.tensor(select_idx_history)
-        grad_1 = context[history[:,0]]
-        grad_2 = context[history[:,1]]
+        grad_1 = context[history[:, 0]]
+        grad_2 = context[history[:, 1]]
         feature = (grad_1 - grad_2).cpu()
 
-        U = torch.matmul(feature.transpose(0,1), feature)
+        U = torch.matmul(feature.transpose(0, 1), feature)
         U = U.diagonal()
         U = U + 1e-10
 
         grad_arm_1 = context[arm1]
         feature_arm_2 = (context - grad_arm_1).cpu()
 
-        sigma = torch.sqrt(torch.sum(self.nu * feature_arm_2 * feature_arm_2 / U, dim=1))
+        sigma = torch.sqrt(
+            torch.sum(self.nu * feature_arm_2 * feature_arm_2 / U, dim=1)
+        )
         sample_r = mu.view(-1) + sigma.view(-1)
 
         if prompt_domain_id is None:
@@ -516,20 +685,24 @@ class LinearDBDiag:
             arm2 = sorted_idx[1]
         else:
             arm2 = sorted_idx[0]
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.select :: Selected arms: {arm1}, {arm2}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.select :: Selected arms: {arm1}, {arm2}"
+        )
         return arm1, arm2
 
     def find_best(self, context, select_idx_history, all_domain=False, batch_size=300):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.find_best :: Finding best arm, all_domain: {all_domain}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.find_best :: Finding best arm, all_domain: {all_domain}"
+        )
         context_size = context.shape[0]
         n_batchs = context_size // batch_size + int((context_size % batch_size) != 0)
         mu = []
         self.func.eval()
         for i in range(n_batchs):
             if i == n_batchs - 1:
-                context_batch = context[(i*batch_size):]
+                context_batch = context[(i * batch_size) :]
             else:
-                context_batch = context[(i*batch_size):((i+1)*batch_size)]
+                context_batch = context[(i * batch_size) : ((i + 1) * batch_size)]
 
             mu_ = self.func(context_batch)
             mu.append(mu_.cpu())
@@ -541,16 +714,30 @@ class LinearDBDiag:
             all_queried = torch.tensor(select_idx_history).view(-1)
             arm_ = torch.argmax(mu.view(-1)[all_queried])
             arm = all_queried[arm_]
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.find_best :: Best arm: {arm}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.find_best :: Best arm: {arm}"
+        )
         return arm
 
     def train(self, context=None, reward=None, local_training_iter=30):
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.train :: Training model, local iterations: {local_training_iter}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.train :: Training model, local iterations: {local_training_iter}"
+        )
         if self.init_state_dict is not None:
             self.func.load_state_dict(deepcopy(self.init_state_dict))
         if context is not None:
-            self.pair_embedding = torch.cat((self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1)
-            self.reward = torch.cat((self.reward, torch.tensor([reward]).reshape(-1).to(**tkwargs).to(dtype=torch.int64)))
+            self.pair_embedding = torch.cat(
+                (self.pair_embedding, context.reshape(2, 1, -1).to(**tkwargs)), dim=1
+            )
+            self.reward = torch.cat(
+                (
+                    self.reward,
+                    torch.tensor([reward])
+                    .reshape(-1)
+                    .to(**tkwargs)
+                    .to(dtype=torch.int64),
+                )
+            )
 
         self.len = self.pair_embedding.shape[1]
         optimizer = torch.optim.Adam(self.func.parameters(), lr=1e-3)
@@ -564,11 +751,15 @@ class LinearDBDiag:
             pred_2 = self.func(side_2)
             logits = (pred_1 - pred_2).reshape(-1)
             reward_ = self.reward.reshape(-1)
-            loss = F.binary_cross_entropy_with_logits(logits, reward_.to(dtype=torch.float32))
+            loss = F.binary_cross_entropy_with_logits(
+                logits, reward_.to(dtype=torch.float32)
+            )
 
             loss.backward()
             optimizer.step()
-        utils.debug_log(f"powhf.LlamaForMLPRegression.LinearDBDiag.train :: Training loss: {loss.item()}")
+        utils.debug_log(
+            f"powhf.LlamaForMLPRegression.LinearDBDiag.train :: Training loss: {loss.item()}"
+        )
         return self.func.state_dict()
 
 
